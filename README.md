@@ -13,10 +13,10 @@ Comparative research on how **four leading AI coding agent projects** implement:
 
 | Project | Implementation |
 |---------|---------------|
-| [**pi-mono** (badlogic/pi-mono)](https://github.com/badlogic/pi-mono) | [pi-mono-research.md](./pi-mono-research.md) |
-| [**OpenCode** (anomalyco/opencode)](https://github.com/anomalyco/opencode) | [opencode-research.md](./opencode-research.md) |
-| [**Codex CLI** (openai/codex)](https://github.com/openai/codex) | [codex-research.md](./codex-research.md) |
-| [**Claude Code** (anthropic/claude-code)](https://github.com/anthropics/claude-code) | [claude-code-research.md](./claude-code-research.md) |
+| [**pi-mono** (badlogic/pi-mono)](https://github.com/badlogic/pi-mono) | [pi-mono-research.md](./agents/pi-mono-research.md) |
+| [**OpenCode** (anomalyco/opencode)](https://github.com/anomalyco/opencode) | [opencode-research.md](./agents/opencode-research.md) |
+| [**Codex CLI** (openai/codex)](https://github.com/openai/codex) | [codex-research.md](./agents/codex-research.md) |
+| [**Claude Code** (anthropic/claude-code)](https://github.com/anthropics/claude-code) | [claude-code-research.md](./agents/claude-code-research.md) |
 
 ## Comparison Table Summary
 
