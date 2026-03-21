@@ -151,3 +151,5 @@ Codex 是 OpenAI 进入本地 Agent CLI 市场的产品：
 
 [^1]: GitHub Repository - https://github.com/openai/codex
 [^2]: DeepWiki Documentation - https://deepwiki.com/openai/codex
+[^3]: CSDN - OpenAI Codex CLI 中文使用说明 - https://blog.csdn.net/qq_31095905/article/details/147887930
+[^4]: IT之家 - 在终端就能跑的轻量级推理智能体,OpenAI 发布完全开源 Codex CLI 工具 - https://www.ithome.com/0/845/828.htm
