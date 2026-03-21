@@ -4,9 +4,10 @@
 
 **Claude Code** 是 Anthropic 官方推出的 CLI 原生 AI 编程 Agent，支持终端/IDE/Slack/Web 多端运行，深度集成 Anthropic Claude 模型系列（Opus 4.6/Sonnet 4 等）。
 
-- 官方: https://github.com/anthropics/claude-code
-- 官网: https://code.claude.com/
-- 最新功能: **Agent Teams** 多 Agent 协作，原生支持 MCP (Model Context Protocol)
+- **官方**: https://github.com/anthropics/claude-code [^1]
+- **官网**: https://code.claude.com/
+- **DeepWiki 文档**: https://deepwiki.com/anthropics/claude-code
+- **最新功能**: **Agent Teams** 多 Agent 协作，原生支持 MCP (Model Context Protocol)
 
 ---
 
@@ -14,7 +15,7 @@
 
 ### 核心循环架构
 
-Claude Code 使用标准的 **ReAct 循环** 模式，但在上层增加了分层任务分解：
+Claude Code uses standard **ReAct loop** pattern with hierarchical task decomposition on top. According to CHANGELOG documentation, the main Agent React loop orchestrates task delegation through the `TaskTool` system **[anthropics/claude-code CHANGELOG.md:32-33]**.
 
 ```
 User Request
@@ -30,7 +31,7 @@ Team Lead 汇总结果 → 输出给用户
 
 ### 内置工具循环
 
-Claude Code 核心循环通过 `spawn_sub_agent` 工具支持内联子 Agent 创建：
+Claude Code 核心循环通过 `spawn_sub_agent` 工具（implemented as `TaskTool`)支持内联子 Agent 创建 **[anthropics/claude-code]**:
 - 主 Agent 决定何时将子任务委派给子 Agent
 - 子 Agent 在独立会话中运行，有独立上下文
 - 子 Agent 完成后结果返回主 Agent
@@ -47,9 +48,11 @@ Claude Code 核心循环通过 `spawn_sub_agent` 工具支持内联子 Agent 创
 
 ## 2. 上下文管理与上下文压缩
 
+Context management and automatic compaction implemented in the `ContextManager` within the context window system, documented in CHANGELOG.md:60-63 **[anthropics/claude-code CHANGELOG.md:60-63]**.
+
 ### 自动压缩架构
 
-Claude Code 实现了**带断路器的自动上下文压缩**：
+Claude Code 实现了**带断路器的自动上下文压缩**:
 
 - **触发条件**: 当令牌数接近模型上下文窗口限制时自动触发
 - **用户手动触发**: `/compact` 命令手动压缩
@@ -70,13 +73,16 @@ Claude Code 使用**三级分层存储**：
 2. **项目记忆**: 项目级 `.claude/` 目录存储项目特定上下文
 3. **会话记忆**: 当前会话完整消息历史
 
+**参考来源：**
+- DeepWiki Claude Code context management: https://deepwiki.com/anthropics/claude-code [^2]
+
 ---
 
 ## 3. SubAgent 创建
 
 ### 原生 `spawn_sub_agent` 工具
 
-Claude Code 核心工具集内置 `spawn_sub_agent` 工具：
+Claude Code 核心工具集内置 `spawn_sub_agent` tool implemented via `TaskTool` which spawns isolated subagents for parallel tasks and background work **[anthropics/claude-code CHANGELOG.md:32-33]**:
 
 ```typescript
 // 支持参数
@@ -89,7 +95,7 @@ Claude Code 核心工具集内置 `spawn_sub_agent` 工具：
 
 ### Agent Teams 多 Agent 架构
 
-**Agent Teams** 是 Claude Code 2026 年 2 月推出的实验性功能，支持真正的多 Agent 并行协作：
+**Agent Teams** 是 Claude Code 2026 年 2 月推出的实验性功能，支持真正的多 Agent 并行协作 through multi-agent orchestration via subagent spawning, documented in CHANGELOG.md:202-207 **[anthropics/claude-code CHANGELOG.md:202-207]** describes parallel reviewers with different models and a final validation step.
 
 ### 角色分工
 
@@ -122,9 +128,14 @@ Claude Code 核心工具集内置 `spawn_sub_agent` 工具：
 - **清理**: 修复子 Agent spawn 的 bash 进程退出时没有清理问题
 - **通知**: 修复后台 Agent 完成通知丢失输出路径问题，方便父 Agent 恢复结果
 
+**参考来源：**
+- DeepWiki Agent Teams documentation: https://deepwiki.com/anthropics/claude-code [^2]
+
 ---
 
 ## 4. Skill 机制
+
+Skill 系统 loads from `.claude/skills/*.md` with plugin discovery from user/project/seed directories **[anthropics/claude-code]**.
 
 ### Skill 定义格式
 
@@ -184,7 +195,7 @@ Claude Code 支持会话分叉（fork/branch）：
 
 ### 工作树隔离
 
-Claude Code 集成 git worktree 实现工作目录隔离：
+`--worktree` flag loads skills and hooks from the specific worktree directory, documented in CHANGELOG.md:42-43 **[anthropics/claude-code CHANGELOG.md:42-43]**. Claude Code integrates git worktree for working directory isolation:
 
 - `claude --worktree <path>` 在独立 worktree 打开会话
 - `worktree.sparsePaths` 配置支持稀疏检出，大单体仓库只检出需要的目录
@@ -218,6 +229,9 @@ Claude Code 集成 git worktree 实现工作目录隔离：
 - 并行运行中断后自动清理留下的过期 worktree
 - 避免磁盘空间泄漏
 
+**参考来源：**
+- DeepWiki Worktree management: https://deepwiki.com/anthropics/claude-code [^2]
+
 ---
 
 ## 6. Agent Teams 专属架构
@@ -243,6 +257,8 @@ Team Lead aggregates all results
     ↓
 Presents final result to user
 ```
+
+Multi-agent orchestration documented in CHANGELOG.md:202-207 describes parallel reviewers with different models and a final validation step **[anthropics/claude-code CHANGELOG.md:202-207]**.
 
 ### 隔离保证
 
@@ -293,3 +309,9 @@ Presents final result to user
 | **Agent Teams** | ❌ 不支持 | ❌ 不支持 | ✅ 原生支持并行协作 | ❌ 不支持 |
 
 Claude Code 作为官方产品，在**多 Agent 并行协作**（Agent Teams）和**标准化扩展**（MCP）方面处于领先，会话隔离深度集成 git worktree 这也是开源项目 pi-condo/OpenCode 没有的特性。
+
+## 参考资料
+
+[^1]: GitHub Repository - https://github.com/anthropics/claude-code
+[^2]: DeepWiki Documentation - https://deepwiki.com/anthropics/claude-code
+[^3]: Claude Code Official Website - https://code.claude.com/
