@@ -176,7 +176,55 @@ This makes Nanobot very **extensible** without changing core gateway code.
 
 ---
 
-## 4. Key Source Files & Implementation Points
+## 4. Pairing Mechanism
+
+Pairing mechanism **binds external IM chats (Telegram/QQ/Discord) to a specific user account** so that messages from that IM chat are routed to the correct user's workspace/agent. This is needed because external IM platforms don't natively authenticate to Nanobot user accounts.
+
+### Pairing Design
+
+**Pairing Flow - User Perspective:**
+
+1.  **On Web UI (authenticated user)**:
+    - User goes to IM settings page
+    - Clicks "Generate Pairing Code"
+    - 6-8 digit code displayed, expires in 5-10 minutes
+    - User goes to IM client, finds the chat to pair, sends `/pair <code>`
+
+2.  **On IM Bot (unauthenticated)**:
+    - IM bot receives message starting with `/pair `
+    - Extracts code, verifies with pairing manager
+    - If valid and not expired → binds this IM chat/JID to the user account
+    - Replies success/failure to the IM chat
+
+### Core Data Structures
+
+```go
+// In-memory pairing storage
+type PairingEntry struct {
+  UserId   string
+  ExpiresAt int64  // epoch milliseconds
+}
+
+// code → entry
+var codes = map[string]PairingEntry{}
+// userId → code  (ensures only one active code per user)
+var userCodes = map[string]string{}
+
+const PAIRING_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const CODE_LENGTH = 6;  // 6 uppercase alphanumeric characters
+```
+
+### Security Properties
+
+1.  **Short TTL**: Codes expire in 5 minutes - limits exposure window
+2.  **One code per user**: Generating a new code invalidates any previous code
+3.  **Single-use**: Code is consumed after successful verification - can't be reused
+4.  **Cryptographically secure random**: Uses crypto/rand with modulo bias elimination
+5.  **Case-insensitive verification**: User can enter lowercase even though generated uppercase
+
+---
+
+## 5. Key Source Files & Implementation Points
 
 | File | Purpose |
 |------|---------|

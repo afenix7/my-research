@@ -134,6 +134,21 @@ ZeroClaw uses **public endpoint pairing** for secure authentication between clie
 - Binds external IM chats to specific user accounts
 - Prevents unauthorized users from connecting
 
+### Pairing Flow
+
+**On Web UI (authenticated user)**:
+1.  User goes to IM connection settings
+2.  Clicks "Generate Pairing Code"
+3.  6-8 digit code displayed, expires after expiration
+4.  User goes to IM client, sends `/pair <code>` to the ZeroClaw bot
+5.  Bot verifies the code and binds the chat to the user account
+
+**Core pairing security properties:
+- **Short TTL**: Codes expire quickly (5-10 minutes) limiting exposure window
+- **Single-use**: Code consumed after one successful pairing
+- **One code per user**: Only one active code per user at a time, new code invalidates old
+- **Cryptographically secure random**: Proper elimination of modulo bias for uniform distribution
+
 ---
 
 ## 3. Architecture and Sharing
