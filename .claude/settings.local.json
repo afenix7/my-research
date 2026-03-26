@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l D:/my/my-research/transcripts/agents/*.srt D:/my/my-research/transcripts/game-engine/games104/*.srt D:/my/my-research/transcripts/game-engine/games202/*.srt)",
+      "Bash(wc:*)",
+      "Bash(git add:*)",
+      "Bash(git commit -m \"docs: add generated notes from transcripts:*)"
+    ]
+  }
+}
