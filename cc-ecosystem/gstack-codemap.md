@@ -582,3 +582,535 @@ Claude: → 读取 ~/.claude/skills/gstack/office-hours/SKILL.md
 | **Tabs** | `tabs`, `tab <id>`, `newtab [url]`, `closetab [id]` |
 | **Server** | `status`, `stop`, `restart`, `handoff`, `resume`, `connect`, `disconnect`, `focus` |
 | **Meta** | `chain`, `inbox`, `watch [stop]`, `state save|load <name>`, `frame` |
+
+---
+
+## 核心开发审核流程详解
+
+### Preamble 统一的前置动作
+
+每个技能启动时都执行同一个 Preamble Bash 脚本（tier 3 或 4），做的事情完全一样：
+
+```bash
+# 1. 升级检查
+_UPD=$(gstack-update-check)
+[ -n "$_UPD" ] && echo "$_UPD"
+
+# 2. Session跟踪（PPID文件，120分钟过期）
+mkdir -p ~/.gstack/sessions && touch ~/.gstack/sessions/"$PPID"
+_SESSIONS=$(find ~/.gstack/sessions -mmin -120 -type f | wc -l)
+
+# 3. Contributor模式检测
+_CONTRIB=$(gstack-config get gstack_contributor)
+_PROACTIVE=$(gstack-config get proactive)
+
+# 4. Repo模式检测（solo vs collaborative）
+source <(gstack-repo-mode)
+REPO_MODE=${REPO_MODE:-unknown}
+
+# 5. Lake Intro检查（首次运行显示"Boil the Lake"原则）
+_LAKE_SEEN=$([ -f ~/.gstack/.completeness-intro-seen ] && echo "yes" || echo "no")
+
+# 6. Telemetry设置检查
+_TEL=$(gstack-config get telemetry)
+
+# 7. 遥测开始时间
+_TEL_START=$(date +%s)
+_SESSION_ID="$$-$(date +%s)"
+
+# 8. 遥测写入 analytics/skill-usage.jsonl
+```
+
+这保证了所有技能共享同一套上下文（版本/权限/用户偏好），Agent 无需每次重新问。
+
+---
+
+### 1. /office-hours — YC Office Hours（想法验证）
+
+**触发词：** "brainstorm"、"I have an idea"、"office hours"、"is this worth building"
+
+**核心流程：**
+
+```
+用户描述想法
+    ↓
+运行 preamble（升级检查+telemetry+Lake原则介绍）
+    ↓
+AskUserQuestion: 选择模式
+    ├─ A) Startup mode（YC创业公司模式）
+    └─ B) Builder mode（个人项目/hackathon/开源模式）
+    ↓
+Startup mode：6个强制问题挖掘真实痛点
+    1. Demand Reality（需求现实）— 有多少人真的在等这个？
+    2. Status Quo（现状替代）— 他们现在用什么？为什么不满？
+    3. Desperate Specificity（绝望的具体性）— 描述最窄的用户和最痛的点
+    4. Narrowest Wedge（最窄楔子）— 从哪里切进去？
+    5. Observation（观察）— 你对这个领域的真实洞察是什么？
+    6. Future Fit（未来适配）— 10年后这个市场还存在吗？
+    ↓
+生成 Design Doc（写文件或更新现有文档）
+    ↓
+输出 STATUS: DONE / DONE_WITH_CONCERNS / BLOCKED
+    ↓
+遥测上报（skill=office-hours, outcome={}, duration={}）
+```
+
+**Builder mode 额外步骤：**
+- 设计思维头脑风暴（发散→收敛）
+- 竞品分析（Layer 1/2/3 search）
+- Hackathon 时间线规划
+
+**关键设计细节：**
+- 6个问题必须全部回答，缺一不可（"forcing questions"）
+- AskUserQuestion 必须用固定4段式格式（Re-ground → Simplify → Recommend → Options）
+- Plan 文件路径通过内容搜索自动发现（conversation context primary，content search fallback）
+- `Completeness Principle`：每个选项必须标注 Completeness: X/10
+
+---
+
+### 2. /plan-ceo-review — CEO/Founder 评审（产品战略）
+
+**触发词：** 用户完成 Design Doc 后自动建议，或用户主动调用
+
+**前置依赖：** 需要 Design Doc 或 office-hours 输出
+
+**核心流程：**
+
+```
+读取 Design Doc 或 plan 文件
+    ↓
+运行 preamble
+    ↓
+AskUserQuestion: 这个产品值得做吗？
+    ↓
+6个CEO强制评审维度：
+    1. 市场规模（Market Size）
+    2. 竞争护城河（Competitive Moat）
+    3. 团队适配（Team Fit）
+    4. 10星产品潜力（10x Product）
+    5. 增长策略（Go-to-market）
+    6. 退出路径（Exit optionality）
+    ↓
+4种扩张/收缩决策：
+    ├─ Expand（扩张）：全力投入
+    ├─ Selective Expand（选择性扩张）：专注某个细分
+    ├─ Maintain（维持）：保持现状，不投入更多
+    └─ Contract（收缩）：关停或转型
+    ↓
+将决策写入 plan 文件的 "CEO Review Decisions" 章节
+    ↓
+更新 plan 文件的 GSTACK REVIEW REPORT（Review Status 表）
+    ↓
+输出 PR/MR 链接 + STATUS
+```
+
+**关键设计细节：**
+- `/autoplan` 会自动依次调用 plan-ceo-review → plan-eng-review → plan-design-review，形成完整评审管道
+- CEO Review 可以被 `/autoplan` 跳过（通过配置），但单独调用时必须完成
+- 每次评审结果写入 `~/.gstack/review-logs/review-{timestamp}.jsonl`，Ship 前读取
+
+---
+
+### 3. /plan-eng-review — Engineering Manager 评审（架构测试）
+
+**触发词：** CEO Review 完成后，或用户主动调用
+
+**前置依赖：** 需要 plan 文件（含 CEO 决策）
+
+**核心流程：**
+
+```
+读取 plan 文件
+    ↓
+运行 preamble
+    ↓
+AskUserQuestion: 确认实现方案（基于 CEO Review 的产品方向）
+    ↓
+6个EM强制评审维度：
+    1. 架构设计（Architecture）
+    2. 数据模型（Data Model）
+    3. API 设计（API Design）
+    4. 边缘 case（Edge Cases）
+    5. 测试矩阵（Test Matrix）— 每个功能点对应的测试类型
+    6. 部署策略（Deployment Strategy）
+    ↓
+ASCII 图：画出关键数据流
+    ↓
+输出 plan-eng-review 章节（更新 plan 文件）
+    ↓
+更新 GSTACK REVIEW REPORT
+    ↓
+遥测上报
+```
+
+**关键设计细节：**
+- 必须输出 ASCII 数据流图（文字描述不够，必须可视化）
+- Test Matrix：每个功能点 → 测试类型（单元/集成/E2E/压力测试）的映射表
+- Edge Cases：列出所有边界条件和失败模式
+- 如果 plan 文件中没有可操作项（actionable items），跳过完成度审计
+
+---
+
+### 4. /review — Pre-landing PR Review（代码质量关）
+
+**触发词：** "review this PR"、"code review"、"pre-landing review"
+
+**前置依赖：** 最好是 /ship 触发（自动调用），但也可以单独运行
+
+**核心流程（非交互式，自动化程度高）：**
+
+```
+Step 0: 平台检测
+    → git remote get-url → 判断 GitHub/GitLab/unknown
+    → gh auth status / glab auth status → 确认CLI可用性
+    → 确定 base branch（PR目标分支或 default branch）
+    ↓
+Step 1: 分支检查
+    → git branch --show-current
+    → 如果在 base branch → abort
+    → git fetch origin <base> --quiet && git diff origin/<base> --stat
+    → 如果没有 diff → abort
+    ↓
+Step 1.5: Scope Drift 检测（关键！）
+    → 读取 TODOS.md + PR description + commit messages
+    → 提取 stated intent（本来要做什么）
+    → 对比 git diff 中的文件变更 vs stated intent
+    → 如果 scope drift 严重（建了不该建的），报告并 stop
+    ↓
+Step 2: Plan File 发现
+    → 优先从 conversation context 获取 plan 文件路径
+    → fallback：内容搜索 ~/.claude/plans / .gstack/plans
+    → 验证 plan 文件相关性
+    ↓
+Step 3: 可操作项提取（从 plan file）
+    → 提取 checkbox items、numbered steps、imperative statements
+    → 最多50项，按类型分类（CODE/TEST/MIGRATION/CONFIG/DOCS）
+    ↓
+Step 4: 代码质量审查（4大类）
+    ├─ SQL Safety：参数化查询、ORM使用、事务边界
+    ├─ LLM Trust Boundary：prompt注入风险、输出验证
+    ├─ Conditional Side Effects：条件分支中的副作用
+    └─ Structural Issues：错误处理、资源释放、并发问题
+    ↓
+Step 5: 自动修复
+    → 能自动修的（dead code、N+1查询、stale comments）→ 直接 Edit
+    → 需要用户判断的 → AskUserQuestion（BLOCK级别才停）
+    ↓
+Step 6: 写评审报告 → PR comment 或 stdout
+    ↓
+Step 7: 更新 review log → ~/.gstack/review-logs/review-{timestamp}.jsonl
+    ↓
+遥测上报
+```
+
+**关键设计细节：**
+- `/review` 是自动化程度最高的技能，几乎不需要用户交互
+- 3次尝试后失败 → STOP + escalate（Iron Law）
+- SQL Safety 是重点审查项（gstack 的核心场景之一是 YC 创业公司，数据操作多）
+- Scope Drift 检测是独有机制：防止"本来要做A，结果做了B"的情况
+
+---
+
+### 5. /qa — QA Lead 浏览器测试（真实浏览器+Bug修复）
+
+**触发词：** "qa"、"test this site"、"find bugs"、"test and fix"
+
+**前置依赖：** staging 环境 URL
+
+**核心流程（迭代式 Fix Loop）：**
+
+```
+Step 0: 平台检测 + base branch（同上）
+    ↓
+Step 1: AskUserQuestion: 选择测试深度
+    ├─ A) Quick（critical + high severity）
+    ├─ B) Standard（+ medium severity）
+    └─ C) Exhaustive（+ cosmetic）
+    ↓
+Step 2: 获取 staging URL
+    → 如果有 PR → gh pr view --json url → staging 环境
+    → 如果没有 → AskUserQuestion 请求 URL
+    ↓
+Step 3: 健康度基线评分（Before Score）
+    → 运行 $B browse snapshot -i
+    → 评估页面渲染、表单、链接、console errors
+    → 记录 baseline health score
+    ↓
+===== 迭代 Fix Loop（Bug → Fix → Re-verify）=====
+Loop:
+    a) 探索性测试（用 $B browse 工具）
+       → $B goto <staging_url>
+       → $B snapshot -i（获取可交互元素）
+       → $B click @e3、$B fill @e5 "test" 等操作
+       → $B console --errors（检查 console 错误）
+       → $B network（检查 API 响应）
+    
+    b) 发现 bug
+       → 分类：Critical / High / Medium / Cosmetic
+       → 记录 bug：描述 + 重现步骤 + 截图
+    
+    c) AskUserQuestion: 如何处理
+       → A) Fix it now（立即修复，推荐）
+       → B) Fix after qa（记入 TODO）
+       → C) Skip（跳过）
+    
+    d) 如果选 A：修复 bug
+       → 读源码 → Edit/Write 修改
+       → 原子提交（一个 bug 一个 commit）
+       → 重新运行 $B verify 验证修复
+       → 如果 verify 通过：标记 FIXED
+       → 如果 verify 失败：重新 Fix（最多3次）
+    
+    e) 重复直到所有 bug 处理完
+=========================================
+    ↓
+Step 4: 生成健康度报告（After Score）
+    → 修复前 vs 修复后 health score 对比
+    → FIXED / WONTFIX / REGRESSION 分类汇总
+    ↓
+Step 5: 生成回归测试（Boil the Lake）
+    → 根据发现的 bug，生成 Playwright 测试脚本
+    → 写入 test/ 目录
+    → commit 原子化
+    ↓
+Step 6: Ship-Readiness Summary
+    → 评估是否可以 ship（基于剩余 critical/high bug）
+    → 输出建议
+    ↓
+遥测上报
+```
+
+**关键设计细节：**
+- Fix Loop 是 `/qa` 独有的：发现bug → 立即修 → 验证 → 再测 → 直到clean
+- `$B` 命令通过 `$B snapshot -i` → `$B click @e3` → `$B fill @e5 "text"` 序列操作，模拟真实用户交互
+- 每次修复后自动 re-verify，不需要用户重新触发
+- 回归测试自动生成（Completeness Principle：QA发现了的所有场景都要有测试）
+- 三层测试粒度（Quick/Standard/Exhaustive）由用户选择
+
+---
+
+### 6. /ship — Release Engineer 提交流（全自动化）
+
+**触发词：** "ship"、"deploy"、"push to main"、"create a PR"
+
+**前置依赖：** Review readiness dashboard（Review 必须是 CLEAR）
+
+**核心流程（Step by Step）：**
+
+```
+Step 0: 平台检测（同 review）
+    ↓
+Step 1: Pre-flight Check
+    → git branch --show-current
+    → 如果在 base branch → abort
+    → git status + git diff --stat
+    → uncommitted changes → 自动包含（不询问）
+    ↓
+Step 2: Review Readiness Dashboard
+    → gstack-review-read → 读取 ~/.gstack/review-logs/
+    → 显示各 Review 的 Runs / Last Run / Status
+    ┌─────────────────────────────────────────────────────┐
+    │ Eng Review      | 1   | 2026-03-16 15:00 | CLEAR  │
+    │ CEO Review      | 0   | —                | —      │
+    │ Design Review   | 0   | —                | —      │
+    │ Adversarial     | 0   | —                | —      │
+    └─────────────────────────────────────────────────────┘
+    ↓
+    如果 Eng Review 不是 CLEAR → BLOCK（需要先 review）
+    如果有 ASK items → AskUserQuestion（是否继续）
+    ↓
+Step 3: Base Branch 同步
+    → git fetch origin <base>
+    → git merge origin/<base> --no-edit
+    → 如果有冲突 → 尝试 auto-merge
+    → 如果 auto-merge 失败 → BLOCK（显示冲突文件）
+    ↓
+Step 3.4: 测试覆盖率 Gate
+    → 运行测试套件
+    → 计算覆盖率
+    → 如果覆盖率 < 阈值（如 < 70%）→ AskUserQuestion（是否override）
+    → 硬 gate：coverage 低于阈值必须用户确认才能继续
+    ↓
+Step 3.45: Plan Items 完成度审计
+    → 读取 plan file 的 actionable items
+    → 检查每个 CODE/TEST/MIGRATION item 的完成状态
+    → 如果有 item NOT DONE 且无用户 override → BLOCK
+    ↓
+Step 3.47: Plan Verification Failures
+    → 验证测试是否真的覆盖了 plan 中的要求
+    → 如果测试覆盖不足 → 自动生成缺失测试
+    ↓
+Step 4: 版本号 Bump（语义化版本）
+    → AskUserQuestion（如果需要 MAJOR/MINOR bump）
+    → MICRO/PATCH → 自动决定
+    → 更新 VERSION 或 package.json
+    ↓
+Step 5: CHANGELOG 更新
+    → 从 git diff 自动生成 changelog 条目
+    → 格式：- {feature/fix}: {description}
+    → 追加到 CHANGELOG.md
+    ↓
+Step 6: Commit + Push
+    → git add -A
+    → git commit -m "release: v{x.y.z} {changelog summary}"
+    → git push origin HEAD
+    ↓
+Step 7: 创建 PR
+    → gh pr create / glab mr create
+    → PR body 包含：
+      - CHANGELOG 条目
+      - Review readiness 状态
+      - Coverage 报告
+      - Ship-readiness summary
+    ↓
+输出 PR URL
+    ↓
+遥测上报
+```
+
+**关键设计细节：**
+- `/ship` 是完全非交互式的（用户说 ship = 全自动执行）
+- Review Readiness Dashboard 是强制 gate（Eng Review 不是 CLEAR 就停下）
+- 测试覆盖率是硬 gate，不是软检查
+- 版本号 bump：MICRO/PATCH 自动，MINOR/MAJOR 需要用户确认
+- Plan items 完成度检查：如果 plan 里写了要做的事没做完，不让 ship
+
+---
+
+### 7. /investigate — Debugger 系统性调试
+
+**触发词：** "debug"、"investigate"、"why is this broken"
+
+**核心流程（Iron Law：3次失败后停止）：**
+
+```
+Step 1: 复现问题
+    → $B goto <failing_url> 或本地运行命令
+    → 记录错误现象（截图 + console + network）
+    ↓
+Step 2: 假设生成
+    → 根据错误信息，列出3个最可能的根因
+    → 优先级排序
+    ↓
+Step 3: 验证假设
+    → 用 Read/Grep 检查源码
+    → 用 $B js <expr> 在页面上下文执行 JS
+    → 用 Bash 运行诊断命令
+    ↓
+Step 4: 修复
+    → 如果找到根因 → Edit 修复
+    → 运行验证
+    ↓
+    如果失败 → 回到 Step 2（下一个假设）
+    ↓
+    如果3次都失败 → STOP + escalate
+    （不重复同样的错误路径）
+    ↓
+Step 5: 写 Debug Report
+    → 根因分析
+    → 修复方案
+    → 防止建议（如何测试这个不会在其他地方出现）
+    ↓
+遥测上报
+```
+
+**关键设计细节：**
+- "Iron Law"：同一路径试3次就停，防止 Agent 在错误方向上无限循环
+- 每次失败后要明确换假设，不是重复试同样的修复
+- Debug Report 要包含"防止建议"（regression test）
+
+---
+
+### 8. /autoplan — CEO→Design→Eng 自动管道
+
+**触发词：** "autoplan"、"run the full review pipeline"
+
+**核心流程（顺序执行4个 Review）：**
+
+```
+Step 1: AskUserQuestion: 选择模式
+    ├─ A) Full pipeline（CEO→Design→Eng 全链路）
+    ├─ B) Eng only（只跑工程评审）
+    └─ C) Custom（选择性执行）
+    ↓
+If Full pipeline:
+    a) /office-hours（如果还没有 Design Doc）
+    b) /plan-ceo-review（产品战略）
+    c) /plan-design-review（设计质量）
+    d) /plan-eng-review（工程架构）
+    ↓
+If Eng only:
+    → /plan-eng-review
+    ↓
+每个 Review 完成后：
+    → 更新 plan 文件的 GSTACK REVIEW REPORT
+    → Review 结果写入 ~/.gstack/review-logs/
+    ↓
+输出完整的 Review 汇总表
+    ↓
+遥测上报
+```
+
+**关键设计细节：**
+- `/autoplan` 是 gstack 的"一键启动完整评审"入口
+- 每个 Review 完成后都更新同一个 plan 文件（所以最后有完整的 Review Report）
+- Review 结果持久化到 `~/.gstack/review-logs/`，被 `/review` 和 `/ship` 读取（跨会话共享）
+
+---
+
+### 9. 跨技能数据流
+
+```
+Plan File（共享文档）
+    ↑
+    ├── /office-hours → 写入 Plan: Overview + Vision
+    ├── /plan-ceo-review → 写入 Plan: CEO Decisions
+    ├── /plan-eng-review → 写入 Plan: Architecture + Test Matrix
+    └── /plan-design-review → 写入 Plan: Design Spec
+
+~/.gstack/review-logs/（Review 结果持久化）
+    ↑
+    ├── /review → 写入 review-{timestamp}.jsonl
+    ├── /plan-eng-review → 写入 plan-eng-review-{timestamp}.jsonl
+    ├── /plan-ceo-review → 写入 plan-ceo-review-{timestamp}.jsonl
+    └── /autoplan → 调用以上全部
+
+~/.gstack/review-logs/
+    ↓ (被读取)
+    /ship → 读取 Review Readiness Dashboard
+    /review → 读取历史 Review 状态
+
+TODOS.md（Scope drift 对比基准）
+    ↓
+    /review → 对比 Plan items vs 实际 diff
+    /ship → Plan items 完成度审计
+```
+
+---
+
+### 10. 统一协议（所有技能共享）
+
+**Completion Status Protocol：**
+每个技能结束时必须报告：
+- `DONE` — 全部完成，每条结论有证据
+- `DONE_WITH_CONCERNS` — 完成但有问题需告知用户
+- `BLOCKED` — 无法继续，说明阻塞原因和已尝试的步骤
+- `NEEDS_CONTEXT` — 缺少必要信息，明确说明需要什么
+
+**Escalation 规则（Iron Law）：**
+- 同一任务3次尝试失败 → STOP
+- 安全敏感变更不确定 → STOP
+- 超出可验证范围 → STOP
+- Escalation 格式：`STATUS: BLOCKED | REASON: ... | ATTEMPTED: ... | RECOMMENDATION: ...`
+
+**Boil the Lake 原则：**
+AI让边际成本接近零，所以永远选完整方案而非捷径：
+- Feature：完整实现 vs 概念验证 → 选完整
+- Test：100%覆盖 vs 只测主路径 → 选100%
+- Bug fix：全部边缘case vs 只修主路径 → 选全部
+
+**AskUserQuestion 固定格式：**
+1. Re-ground（重述上下文）
+2. Simplify（让16岁能看懂）
+3. Recommend（推荐方案+Completeness评分）
+4. Options（A/B/C并列）
