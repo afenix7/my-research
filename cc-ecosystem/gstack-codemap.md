@@ -1,389 +1,346 @@
-# gstack — CodeMap
+# gstack CodeMap
 
-**GitHub**: https://github.com/garrytan/gstack  
-**Language**: TypeScript (Bun)  
-**Runtime**: Bun.serve HTTP server + Playwright + Chromium (headless)  
-**License**: MIT  
-**Architecture Doc**: ARCHITECTURE.md (21KB, 详尽)  
+> **Garry Tan (Y Combinator President & CEO) 的个人 Claude Code 插件**
+> GitHub: `garrytan/gstack` | MIT License | 2026年3月最新
 
----
+## 项目概述与定位
 
-## 1. 项目概述与定位
+gstack 是 Garry Tan 将自己打造成"一人开发团队"的完整工作流系统。核心理念：
 
-**gstack** 是 Claude Code 的**持久化浏览器自动化插件**。它的核心定位是：解决"AI agent 需要操作浏览器"时的两个根本问题——**冷启动延迟**（每次命令重新开浏览器 = 3-5秒等待）和**状态丢失**（cookie、登录会话、打开的 tab 全部丢失）。
+> **"Turn Claude Code into a virtual engineering team"**
 
-gstack 通过维护一个**常驻 Chromium 进程**和**本地 HTTP 服务**，让 Claude Code 通过 `$B` 命令前缀来控制浏览器，实现亚秒级响应和持久化状态。
+实际成果：60天内 600,000+ 行生产代码（35% 测试），每天 10,000-20,000 行，周产量 ~115k LOC，同时全职运营 YC。
 
-**典型使用场景**：
-- Web QA 测试（自动点击、表单填写、截图验证）
-- 复杂 Web 应用的操作（需要登录状态的爬虫、Dashboard 操作）
-- 端到端测试生成
+**定位：** 不是工具集合，而是一个完整的软件开发**流程**。覆盖 Think → Plan → Build → Review → Test → Ship → Reflect 全生命周期。
 
 ---
 
-## 2. 核心架构
+## 核心架构
 
-### 2.1 系统架构图
+### 系统结构
 
 ```
-Claude Code                         gstack CLI (Bun binary)
-────────────                        ────────────────────────
-  Tool call: $B snapshot -i
-  ──────────────────────────────→   CLI 读取 .gstack/browse.json
-                                    找到 port + token
-                                    POST /command (Bearer token)
-                                             │
-                                  ┌──────────▼───────────┐
-                                  │  Bun.serve HTTP Server │
-                                  │  • 路由分发             │
-                                  │  • Bearer token 鉴权    │
-                                  │  • Playwright CDP 调用  │
-                                  └──────────┬───────────┘
-                                             │ CDP (Chromium DevTools)
-                                  ┌──────────▼───────────┐
-                                  │  Chromium (headless)   │
-                                  │  • 持久化进程           │
-                                  │  • cookie/localStorage  │
-                                  │  • 30分钟 idle 超时     │
-                                  └────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                    Claude Code  Session                     │
+│                                                             │
+│   /office-hours → /plan-ceo-review → /plan-eng-review      │
+│        ↓              ↓                   ↓                │
+│   Design Doc    Architecture      Test Matrix               │
+│        ↓              ↓                   ↓                │
+│   /design-review  →  /review  →  /qa  →  /ship  →  /land  │
+│        ↓              ↓           ↓        ↓         ↓       │
+│   Auto-fix       Auto-fix    Bug fix  PR open   Deployed   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 核心技术选型
-
-**为什么用 Bun**：
-1. **编译成单一二进制**：`bun build --compile` 产出 ~58MB 单文件，无需 Node.js 环境，适合安装在 `~/.claude/skills/` 这种非标准路径
-2. **原生 SQLite**：cookie 解密直接读 Chromium 的 SQLite cookie 数据库，`new Database()` 是 Bun 内置 API，无需 `better-sqlite3`
-3. **原生 TypeScript**：开发态 `bun run server.ts`，无编译步骤
-4. **内置 HTTP 服务器**：`Bun.serve()` 够用，不需要 Express/Fastify
-
-**为什么用 Playwright Locator 而不是 DOM 注入**：
-- CSP (Content Security Policy) 会阻止 DOM 修改
-- React/Vue/Svelte 水合过程会剥离注入的属性
-- Shadow DOM 无法从外部访问
-- Playwright Locator 使用 Chromium 内部维护的 Accessibility 树，外部查询，完全无副作用
-
-### 2.3 项目结构
+### 文件结构
 
 ```
 gstack/
-├── browse/                   # 核心浏览器自动化
-│   ├── server.ts             # Bun HTTP 服务器主文件
-│   ├── browser-manager.ts    # Chromium 生命周期管理
-│   ├── commands.ts           # 命令注册表 (READ/WRITE/META)
-│   ├── snapshot.ts           # ARIA snapshot + ref 分配
-│   ├── ref-map.ts            # @e1/@e2 ref → Locator 映射
-│   ├── cookie-decrypt.ts     # macOS Keychain → AES-128 解密
-│   ├── keychain.ts           # macOS Keychain 访问封装
-│   ├── log-buffers.ts        # 环形缓冲区日志系统
-│   └── errors.ts             # 统一错误封装 (wrapError)
-├── gen-skill-docs.ts         # SKILL.md 模板生成器
-├── SKILL.md                  # Claude Code Skill 文档 (auto-generated)
-├── SKILL.md.tmpl             # 模板源文件
-├── ARCHITECTURE.md           # 架构设计文档
-├── BROWSER.md                # 浏览器操作命令参考
-├── CLAUDE.md                 # 开发者指南
-├── CONTRIBUTING.md           # 贡献指南
-├── test/
-│   ├── e2e/                  # E2E 测试
-│   │   └── helpers/
-│   │       ├── session-runner.ts   # Claude -p 子进程运行器
-│   │       └── eval-collector.ts   # eval 数据收集器
-│   └── unit/                # 单元测试
-└── browse/dist/             # 编译输出 (.version 文件在这里)
+├── SKILL.md                    # 入口技能（gstack主技能）
+├── AGENTS.md                   # Agent定义
+├── ARCHITECTURE.md             # 架构文档（21KB）
+├── CLAUDE.md                   # 用户级CLAUDE.md配置
+├── setup                       # 安装脚本
+├── bin/                        # 编译后的二进制CLI
+│   ├── gstack-config          # 配置管理
+│   ├── gstack-global-discover  # 跨仓库技能发现
+│   ├── gstack-review-log      # Review历史记录
+│   └── gstack-telemetry-*     # 遥测数据
+├── browse/                     # 🌟 核心模块：持久化浏览器
+│   ├── src/
+│   │   ├── server.ts          # Bun.serve HTTP服务
+│   │   ├── browser-manager.ts # Chromium生命周期
+│   │   ├── commands.ts        # 命令分发（READ/WRITE/META）
+│   │   ├── cookie-import-*.ts # macOS Keychain解密
+│   │   ├── sidebar-agent.ts   # Chrome侧边栏子Agent
+│   │   └── snapshot.ts        # ARIA ref系统
+│   └── test/
+├── office-hours/              # YC Office Hours技能
+├── plan-ceo-review/           # CEO/Founder评审
+├── plan-eng-review/           # Engineering Manager评审
+├── plan-design-review/         # Senior Designer评审
+├── design-consultation/       # 设计系统生成
+├── review/                    # Staff Engineer代码review
+├── investigate/               # Debugger系统性调试
+├── qa/                       # QA Lead浏览器测试
+├── qa-only/                  # QA Reporter（纯报告）
+├── cso/                      # Chief Security Officer (OWASP+STRIDE)
+├── ship/                     # Release Engineer提交流
+├── land-and-deploy/          # 合并+部署+验证
+├── canary/                   # SRE灰度监控
+├── benchmark/                # Performance Engineer基准测试
+├── retro/                    # Eng Manager周回顾
+├── document-release/         # Technical Writer文档更新
+├── codex/                    # OpenAI Codex第二意见
+├── careful/                  # Safety Guardrails
+├── freeze/guard/unfreeze/    # 目录编辑锁
+├── setup-browser-cookies/   # Cookie导入
+├── setup-deploy/            # 部署配置
+├── gstack-upgrade/          # 自升级
+├── autoplan/                # 自动计划管道
+├── connect-chrome/          # Chrome扩展（侧边栏Agent）
+└── extension/               # Chrome扩展UI
 ```
 
 ---
 
-## 3. 主要模块分析
+## 28个技能全景图
 
-### 3.1 BrowserManager (`browser-manager.ts`)
+### Sprint流程技能（按执行顺序）
 
-Chromium 生命周期管理的核心模块：
+| 技能 | 角色 | 核心职责 |
+|------|------|---------|
+| `/office-hours` | YC Office Hours | 重构问题，6个强制问题挖掘真实痛点，生成Design Doc |
+| `/plan-ceo-review` | CEO/Founder | 重新思考问题，找10星产品，4种模式（扩张/选择性扩张/保持/收缩） |
+| `/plan-eng-review` | Eng Manager | 锁定架构、数据流、ASCII图、边缘case、测试矩阵 |
+| `/plan-design-review` | Senior Designer | 维度评分0-10，AI Slop检测，交互式设计决策 |
+| `/design-consultation` | Design Partner | 从零构建设计系统，研究竞品+生成mockup |
+| `/review` | Staff Engineer | 找CI通过但生产爆炸的bug，**自动修复**明显问题 |
+| `/investigate` | Debugger | 系统性根因调试，3次失败后停止（Iron Law） |
+| `/design-review` | Designer Who Codes | 同plan-design-review但直接修复，原子提交+前后截图 |
+| `/qa` | QA Lead | **打开真实浏览器**测试，修复bug，生成回归测试 |
+| `/qa-only` | QA Reporter | 纯报告模式，不改代码 |
+| `/ship` | Release Engineer | 同步main，跑测试，审计覆盖率，push，开PR |
+| `/land-and-deploy` | Release Engineer | 合并PR，等CI/CD，验证生产健康 |
+| `/canary` | SRE | 监控控制台错误、性能回退、页面失败 |
+| `/benchmark` | Performance Engineer | 基线页面加载、Core Web Vitals、对比PR前后 |
+| `/document-release` | Technical Writer | 更新所有漂移的文档（README/ARCHITECTURE/CONTRIBUTING） |
+| `/retro` | Eng Manager | 团队感知周回顾，/retro global跨所有项目 |
 
-```typescript
-class BrowserManager {
-  browser: Browser | null
-  page: Page | null
-  
-  launch(): Promise<void>    // 冷启动 Chromium
-  ensureReady(): Promise<void>  // 保证 browser + page 就绪
-  getPage(): Page
-  close(): void              // 关闭 browser
-}
-```
+### 浏览器技能
 
-关键特性：
-- **版本自动重启**：CLI 读取 `browse/dist/.version`，若与运行中 server 不匹配则 kill 旧进程重启
-- **crash recovery**：Chromium 断开连接时 server 立即退出，CLI 检测到下次自动重启
-- **idle timeout**：30分钟无操作自动关闭
+| 技能 | 角色 | 核心职责 |
+|------|------|---------|
+| `/browse` | QA Engineer | 真实Chromium浏览器，~100ms/命令，$B connect可看实时动作 |
+| `/setup-browser-cookies` | Session Manager | 从Chrome/Arc/Brave/Edge导入Cookie到headless session |
 
-### 3.2 命令系统 (`commands.ts`)
+### 权力工具（Power Tools）
 
-命令按副作用分类：
-
-```typescript
-// READ — 只读查询，无状态修改
-const READ_COMMANDS = new Set([
-  'text', 'html', 'links', 'console', 'cookies',
-  'network', 'tabs', 'url', 'title', 'screenshot'
-])
-
-// WRITE — 页面状态修改，非幂等
-const WRITE_COMMANDS = new Set([
-  'goto', 'click', 'fill', 'press', 'select',
-  'check', 'uncheck', 'hover', 'scroll', 'upload'
-])
-
-// META — 服务级操作
-const META_COMMANDS = new Set([
-  'snapshot', 'chain', 'tabs', 'screenshot', 'help'
-])
-```
-
-每个命令经过统一分发：
-```typescript
-if (READ_COMMANDS.has(cmd))  → handleReadCommand(cmd, args, bm)
-if (WRITE_COMMANDS.has(cmd)) → handleWriteCommand(cmd, args, bm)
-if (META_COMMANDS.has(cmd))  → handleMetaCommand(cmd, args, bm, shutdown)
-```
-
-### 3.3 Ref 系统 (`ref-map.ts` + `snapshot.ts`)
-
-这是 gstack 最关键的技术创新之一——**让 AI 通过 @e1/@e2 这样的引用来操作页面元素，而不是写 CSS selector 或 XPath**。
-
-**工作流程**：
-1. `snapshot` 命令调用 `page.accessibility.snapshot()` 获取 ARIA 树
-2. Parser 遍历 ARIA 树，分配顺序引用：`@e1`, `@e2`, `@e3`...
-3. 每个 ref 对应一个 Playwright Locator：`getByRole(role, { name }).nth(index)`
-4. 存储 `Map<string, RefEntry>` 在 BrowserManager 实例上
-
-**Staleness 检测**：
-```typescript
-resolveRef(@e3) → refMap.get("e3")
-               → count = await locator.count()  // 异步验证
-               → if count === 0 → throw "Ref @e3 is stale — run 'snapshot' to get fresh refs"
-```
-每次 `framenavigated` 事件清空 refMap——导航后 locators 全部失效，强制重新 snapshot。
-
-**Cursor-interactive refs (`@c`)**：通过 `-C` flag 找到不在 ARIA 树中的可点击元素（`cursor: pointer`、`onclick` 属性、自定义 `tabindex`）。
-
-### 3.4 Cookie 安全系统 (`cookie-decrypt.ts` + `keychain.ts`)
-
-```
-用户导入 Cookie
-    ↓
-macOS Keychain 访问（需用户点击"Allow"）
-    ↓ (PBKDF2 + AES-128-CBC 解密)
-内存中的明文 cookie
-    ↓
-注入 Playwright Context
-    ↓ (从不写入磁盘)
-Context 关闭 → 缓存清除
-```
-
-安全设计要点：
-- **Keychain 访问必须用户授权**：macOS Keychain 对话框，用户必须手动点击
-- **数据库只读复制**：从 Chromium cookie DB 复制到 tempfile 再打开，避免锁冲突
-- **Session 级 key 缓存**：Keychain password + AES key 仅在 server 生命周期内缓存，server 关闭即清除
-- **日志无 cookie 值**：所有日志输出截断 cookie value
-
-### 3.5 日志架构 (`log-buffers.ts`)
-
-三个环形缓冲区（各 50,000 条，O(1) push）：
-
-```
-Browser events → CircularBuffer (in-memory)
-                     ↓ (每1秒异步 flush)
-              .gstack/*.log (append-only)
-```
-
-类型：`console 事件`、`network 请求`、`dialog 事件` 各自独立 buffer。
-- HTTP 处理从不阻塞于磁盘 I/O
-- Server crash 最多丢失 1 秒日志
-- 内存有界（50K × 3 buffers）
-- 磁盘文件 append-only，可被外部工具读取
+| 技能 | 功能 |
+|------|------|
+| `/codex` | OpenAI Codex第二意见，3种模式（review gate/adversarial/consultation） |
+| `/careful` | 危险命令警告（rm -rf/DROP TABLE/force-push） |
+| `/freeze` | 目录编辑锁，防范围外修改 |
+| `/guard` | `/careful` + `/freeze` 组合 |
+| `/unfreeze` | 解除冻结 |
+| `/setup-deploy` | 一次性/land-and-deploy配置 |
+| `/gstack-upgrade` | 自升级，检测全局/ vendored安装 |
+| `/autoplan` | CEO→design→eng自动管道，仅呈现需人类决策点 |
 
 ---
 
-## 4. API / 接口设计
+## 核心技术细节
 
-### 4.1 HTTP API (localhost only, Bearer token auth)
+### 1. 持久化浏览器（browse模块）
 
-```
-POST /command
-  Authorization: Bearer <uuid-v4-token>
-  Body: { cmd: string, args: string[] }
-  Response: plain text
+**问题：** 每次命令冷启动浏览器需要3-5秒，20个命令=60秒浪费，且丢失所有状态。
 
-GET /health
-  (无 auth, localhost only)
-  Response: { status: "ok", pid: number, port: number }
-
-GET /cookie-picker
-  (无 auth, localhost only, 只显示 domain/count，不显示值)
-```
-
-### 4.2 状态文件协议
-
-```json
-// .gstack/browse.json (mode 0o600, atomic write via tmp+rename)
-{
-  "pid": 12345,
-  "port": 34567,
-  "token": "uuid-v4",
-  "startedAt": "ISO timestamp",
-  "binaryVersion": "git-rev"
-}
-```
-
-### 4.3 端口选择策略
-
-随机端口 10000-60000（最多重试5次），允许同一机器上最多 10 个 Conductor workspace 各跑独立的 browse daemon，零配置零冲突。
-
-### 4.4 Claude Code Skill 接口
-
-```bash
-$B snapshot -i          # 获取页面快照 + ref
-$B click @e3           # 点击 ref e3
-$B fill @e2 "hello"    # 填写表单
-$B screenshot          # 截图
-$B goto https://...    # 导航
-$B console --last 50   # 读取控制台日志
-$B cookies --import   # 导入浏览器 cookie
-```
-
-SKILL.md 模板系统保证文档与代码同步：
-- `SKILL.md.tmpl` 包含手写 prose + `{{PLACEHOLDER}}`
-- `gen-skill-docs.ts` 在构建时填充 placeholders（命令表、flag 引用等）
-- CI 可验证文档新鲜度：`gen:skill-docs --dry-run` + `git diff --exit-code`
-
----
-
-## 5. 与 Claude Code 的集成机制
-
-### 5.1 安装方式
-
-gstack 作为 Claude Code Skill 安装：
-1. 下载编译好的二进制（或 `bun build --compile` 自己编译）
-2. 二进制文件放到 `~/.claude/skills/gstack/` 
-3. `SKILL.md` 被 Claude Code 的 Skill tool 读取
-4. Claude Code 通过 `$B` 前缀调用 gstack 命令
-
-### 5.2 命令分发流程
+**方案：** 长命Chromium daemon + localhost HTTP。
 
 ```
-Claude Code tool call: $B snapshot -i
-    ↓
-gstack CLI 读取 .gstack/browse.json
-    ↓
-发现 server 未运行 → 启动 server (约3秒)
-    ↓
-CLI POST /command { cmd: "snapshot", args: ["-i"] }
-    ↓
-Bun HTTP Server 路由到 handleMetaCommand()
-    ↓
-Playwright accessibility.snapshot() + ref 分配
-    ↓
-返回带 @e1/@e2 标注的纯文本
-    ↓
-Claude Code 模型理解文本，执行下一步
+CLI (binary) ──HTTP POST /command──> Bun.serve Server ──CDP──> Chromium (headless)
+     ↑                                      │
+     │                                      │ 持久化tabs/cookies/localStorage
+     └──────── 读取 .gstack/browse.json ───┘
 ```
 
-### 5.3 错误哲学
+- **首次调用：** ~3秒（启动server+chromium）
+- **后续调用：** ~100-200ms（纯HTTP）
+- **idle超时：** 30分钟后自动关闭
+- **状态文件：** `.gstack/browse.json`（原子写入，mode 0600）
+- **版本自动重启：** binary hash不匹配时自动杀旧启新
 
-gstack 的错误信息专为 AI agent 设计，每个错误都告诉 agent **下一步该怎么做**：
+### 2. Ref系统（@e1/@e2/@c1）
 
-| 错误 | gstack 给出的指导 |
-|------|-----------------|
-| "Element not found" | "Run `snapshot -i` to see available elements" |
-| "Selector matched multiple" | "Use @refs from `snapshot` instead" |
-| Timeout | "Page may be slow or URL may be wrong" |
+**目标：** Agent用自然语言引用页面元素，不需要CSS selector或XPath。
 
----
+**工作原理：**
+```
+1. $B snapshot -i
+   → Playwright accessibility.snapshot()
+   → 遍历ARIA树，分配 @e1, @e2, @e3...
+   → 每个ref记录 role + name + Locator
 
-## 6. 测试基础设施
+2. $B click @e3
+   → resolveRef("e3") → locator.count() 检查（防止stale）
+   → locator.click()
+```
 
-### 6.1 三层测试模型
+**为什么不用DOM注入（data-ref属性）：**
+- CSP（Content Security Policy）阻止
+- React/Vue/Svelte hydration会剥离
+- Shadow DOM无法穿透
+
+**Locators方案：** 使用Playwright `getByRole()`外部查询，不修改DOM，无上述问题。
+
+**Staleness检测：** 每个ref在执行前 `count()` 检查，元素消失时快速失败（~5ms）而非等30秒超时。
+
+**@c系列（Cursor-interactive）：** 捕获`cursor:pointer`/`onclick`/`tabindex`的自定义组件（如`<div onclick>`），ARIA树里没有但实际可点击。
+
+### 3. 安全模型
+
+- **localhost only：** HTTP server绑定127.0.0.1，非0.0.0.0
+- **Bearer token auth：** 每次启动生成UUID token，写入mode 0600文件
+- **Keychain用户授权：** macOS Keychain访问需用户点击"Allow"
+- **Cookie解密在内存：** PBKDF2+AES-128-CBC从Keychain解密，不落盘
+- **数据库只读：** 复制Cookie DB到tmp文件读取，避免锁冲突
+- **无日志cookie值：** console/network/dialog日志永不包含cookie内容
+
+### 4. Cookie导入流程（macOS）
+
+```
+用户运行 /setup-browser-cookies
+    ↓
+读取 Chrome/Arc/Brave/Edge cookie路径（hardcoded常量）
+    ↓
+复制cookie DB到 /tmp/.gstack-cookies-*.db（只读）
+    ↓
+调用 macOS Keychain 读取 AES key（用户弹窗授权）
+    ↓
+内存解密cookie值
+    ↓
+注入到Playwright context
+    ↓
+启动browser session
+```
+
+### 5. SKILL.md模板系统
+
+```
+SKILL.md.tmpl（人类写的prose + 占位符）
+       ↓
+gen-skill-docs.ts（构建时读取代码元数据）
+       ↓
+SKILL.md（提交到git，自动生成章节）
+```
+
+**占位符体系：**
+
+| 占位符 | 来源 | 生成内容 |
+|--------|------|---------|
+| `{{COMMAND_REFERENCE}}` | `commands.ts` | 分类命令表 |
+| `{{SNAPSHOT_FLAGS}}` | `snapshot.ts` | Flag参考+示例 |
+| `{{PREAMBLE}}` | `gen-skill-docs.ts` | 更新检查+session跟踪+贡献者模式 |
+| `{{BASE_BRANCH_DETECT}}` | `gen-skill-docs.ts` | PR目标技能动态检测 |
+| `{{QA_METHODOLOGY}}` | `gen-skill-docs.ts` | /qa和/qa-only共享方法论 |
+| `{{REVIEW_DASHBOARD}}` | `gen-skill-docs.ts` | /ship前检查的Review就绪仪表板 |
+
+**Preamble（五件事一次bash命令搞定）：**
+1. 升级检查 → `gstack-update-check`
+2. Session跟踪 → 3+并发时进入"ELI16模式"
+3. 贡献者模式 → 写field reports到`~/.gstack/contributor-logs/`
+4. AskUserQuestion格式 → 统一上下文+问题+推荐+选项
+5. Search Before Building → 三层知识（经典/新潮/第一性原理）
+
+### 6. 三层测试模型
 
 | Tier | 内容 | 成本 | 速度 |
 |------|------|------|------|
-| 1 — 静态验证 | 解析 `$B` 命令，校验命令注册表 | 免费 | <2s |
-| 2 — E2E via `claude -p` | 真实 Claude session 运行每个 skill | ~$3.85 | ~20min |
-| 3 — LLM-as-judge | Sonnet 评分文档质量 | ~$0.15 | ~30s |
+| 1 — 静态验证 | 解析所有`$B`命令，与registry对比 | 免费 | <2s |
+| 2 — E2E via `claude -p` | 真实Claude session跑每个技能 | ~$3.85 | ~20min |
+| 3 — LLM-as-judge | Sonnet评分文档清晰度/完整性/可操作性 | ~$0.15 | ~30s |
 
-Tier 1 在每次 `bun test` 运行；Tier 2+3 仅在 `EVALS=1` 环境下运行。
+### 7. Conductor集成
 
-### 6.2 E2E Session Runner
-
-```typescript
-// session-runner.ts — spawn Claude -p 作为独立子进程
-1. Write prompt to temp file (avoid shell escaping)
-2. Spawn: sh -c 'cat prompt | claude -p --output-format stream-json --verbose'
-3. Stream NDJSON from stdout (实时进度)
-4. Race against timeout
-5. Parse NDJSON → structured results
-```
-
-### 6.3 Eval 持久化
-
-```typescript
-// eval-collector.ts — 双写策略
-1. savePartial() — 原子覆写 _partial-e2e.json (每次测试后)
-2. finalize() — 写带时间戳的最终文件 (e2e-YYYYMMDD-HHMMSS.json)
-```
+[Conductor](https://conductor.build) 支持多Claude Code并行：
+- 每个workspace独立session
+- 典型配置：10-15个并行sprint
+- 适用场景：1个office-hours、1个review、1个implementing、1个qa on staging...
 
 ---
 
-## 7. 优缺点分析
+## 与Claude Code的集成方式
+
+### Skill tool接口
+
+所有技能通过 `/skill` 命令调用：
+```
+/office-hours
+/plan-ceo-review
+/review
+/qa
+/ship
+...
+```
+
+### CLAUDE.md集成
+
+安装后添加到项目CLAUDE.md：
+```markdown
+## gstack
+- 使用 gstack 的 /browse skill 进行所有网页浏览
+- 禁止使用 mcp__claude-in-chrome__* 工具
+- 可用技能：/office-hours, /plan-ceo-review, /review, /qa, /ship ...
+```
+
+### Skill注册发现机制
+
+- **全局安装：** `~/.claude/skills/gstack/`
+- **项目安装：** `.claude/skills/gstack/`（git提交后队友自动获得）
+- **自动发现：** Claude Code启动时扫描skills目录
+
+### 多Agent支持
+
+`./setup --host codex` 支持：
+- Claude Code
+- OpenAI Codex CLI
+- Gemini CLI  
+- Cursor
+- 任何支持SKILL.md标准的Agent
+
+---
+
+## 重大更新（本月 v5.0.6）
+
+### Inline Self-Review（2026-03-24）
+
+**原有问题：** 每次review需要约25分钟的subagent review loop（Agent调用Agent）。
+
+**解决方案：** 用inline self-review checklist替代，将时间缩短到~30秒。
+
+**实现：** 在主Agent内完成所有检查项，而非派生子Agent循环。
+
+### 并行Sprint增强
+
+- 设计团队协作流程（design-consultation → design-review → plan-eng-review）
+- `/qa`作为重大解锁：从6个并行worker扩展到12个
+- 智能review路由：CEO不管infra bug fix，design review不审backend变更
+
+---
+
+## 优缺点分析
 
 ### 优点
 
-1. **持久化浏览器彻底解决冷启动问题**：首次 ~3秒，之后每次 ~100-200ms
-2. **状态跨命令保持**：登录 cookie、localStorage、打开的 tab 全部持久化
-3. **Ref 系统解放 AI**：不再需要 AI 写 CSS selector，ref 是语义化的、可读的
-4. **安全性设计周全**：Bearer token、Keychain 授权、只读 DB 复制、日志无敏感数据
-5. **跨平台优雅降级**：多 workspace 端口隔离、WSL/Windows/macOS 特殊处理
-6. **文档-代码强一致性**：gen-skill-docs.ts 确保文档永远反映实际 API
-7. **错误信息 AI 友好**：每个错误都附带可操作的修复建议
-8. **E2E 测试覆盖完整**：3 层测试策略，eval 结果可 jq 查询
+1. **完整流程覆盖** — 不是工具集合，而是端到端软件开发流程
+2. **真实浏览器** — `/browse` + `$B connect`让Agent有眼睛，可看真实页面
+3. **高性能daemon** — 100ms级命令响应（vs 3-5秒冷启动）
+4. **自动化程度高** — review自动修bug，qa自动生成回归测试
+5. **安全设计** — Keychain/cookie处理非常严谨
+6. **多Agent并行** — Conductor支持10-15个并行sprint
+7. **零依赖部署** — 编译后单二进制，无node_modules
+8. **MIT许可** — 完全开源无Premium
 
 ### 缺点
 
-1. **仅支持 macOS**：Keychain 访问是 macOS 专有，Linux/Windows cookie 导入未实现
-2. **仅支持 Chromium**：Firefox、Safari 无支持
-3. **无 iframe 支持**：ref 系统不跨 frame 边界（最常请求的缺失功能）
-4. **HTTP 非加密**：虽然 localhost + Bearer token，理论上同一机器其他进程可嗅探 token
-5. **无 WebSocket 流式响应**：HTTP 轮询模式，大响应有一定延迟
-6. **不使用 MCP 协议**：作者明确选择不用 MCP（认为 JSON schema 开销不必要）
-7. **Server 单点故障**：Chromium crash 后整个 server 退出，虽然 CLI 会重启，但中间有一小段不可用
-8. **文档生成需要构建步骤**：SKILL.md 不是源码的一部分，需要构建时生成
+1. **macOS only（关键功能）** — Keychain cookie导入只支持macOS
+2. **Chrome扩展依赖** — 侧边栏Agent需要Chrome扩展
+3. **Windows/Linux不完整** — cookie解密未实现，browse core可用但认证flow有限
+4. **学习曲线陡** — 28个技能+多Agent协调需要时间适应
+5. **Conductor付费** — 多sprint并行需要[Conductor](https://conductor.build)
+6. **单人背书** — 主要是Garry Tan个人工作流，YC投资背书但社区验证有限
 
 ---
 
-## 8. 与 Claude Code 原生 Browser Tool 的对比
+## 与其他插件对比
 
-| 维度 | gstack | Claude Code 原生 |
-|------|--------|-----------------|
-| 冷启动 | ~100ms（server已运行） | ~2-3秒（每次新建） |
-| 状态持久 | ✅ cookie/tab/localStorage 跨命令保持 | ❌ 每次重新创建 |
-| 元素引用 | @e1/@e2 ref + staleness 检测 | CSS/XPath（脆弱） |
-| macOS cookie 导入 | ✅ Keychain → 明文注入 | ❌ 不支持 |
-| 多 workspace | 零冲突（随机端口） | N/A |
-| 协议复杂度 | 简单 HTTP + 文本 | 原生 Playwright |
-
----
-
-## 9. 关键文件速查
-
-| 文件 | 作用 |
-|------|------|
-| `browse/server.ts` | HTTP 服务器主文件 |
-| `browse/browser-manager.ts` | Chromium 生命周期管理 |
-| `browse/commands.ts` | 命令注册表（READ/WRITE/META 分类） |
-| `browse/snapshot.ts` | ARIA snapshot + ref 分配 |
-| `browse/ref-map.ts` | @ref → Locator 映射 + staleness 检测 |
-| `browse/cookie-decrypt.ts` | Keychain → AES 解密流程 |
-| `ARCHITECTURE.md` | 完整架构文档（~21KB） |
-| `BROWSER.md` | 命令参考文档（~24KB） |
-| `SKILL.md.tmpl` | 文档模板源文件 |
-| `test/helpers/session-runner.ts` | E2E 测试子进程运行器 |
+| 维度 | gstack | GSD | Superpowers | ralph |
+|------|--------|-----|-------------|-------|
+| **定位** | 完整开发团队 | 项目管理 | 开发方法论 | 自主编码循环 |
+| **技能数** | 28个 | 10+ agents, 30+ commands | 6个核心模式 | 2个脚本 |
+| **浏览器** | ✅ 持久化daemon | ❌ | ❌ | ❌ |
+| **多Agent并行** | ✅ Conductor | ✅ 内置 | ❌ | ❌ |
+| **Review自动化** | ✅ 自动修复 | ⚠️ 验证型 | ✅ Inline checklist | ❌ |
+| **学习曲线** | 陡 | 中 | 低 | 低 |
+| **许可** | MIT | MIT | MIT | MIT |
