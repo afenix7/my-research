@@ -1,0 +1,24 @@
+
+{
+  "skill_name": "deep-codebase-research",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "请帮我深度研究 badlogic/pi-mono 这个项目，重点分析它如何实现 agent 反应循环和上下文压缩，加上源码引用和代码片段",
+      "expected_output": "Generates a complete research document with source file references for each feature, includes key code snippets, searches and filters technical articles from CSDN/juejin, outputs properly formatted markdown",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "对比研究一下 anomalyco/opencode 和 badlogic/pi-mono 两个项目对子代理创建的实现有什么不同，整理成markdown文档",
+      "expected_output": "Generates two research documents, compares the architectural differences between the two projects, both with proper source references, organized in clean directory structure",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "研究四个领先的 AI coding agent 项目（pi-mono, OpenCode, Codex CLI, Claude Code）在六个核心特性（Agent React, 上下文压缩, SubAgent, Skill机制, 会话隔离, Agent Teams）上的实现差异，整理好后发布到GitHub",
+      "expected_output": "Complete systematic research with four detailed documents in agents/ directory, README with comparison table, creates GitHub repository and pushes all content",
+      "files": []
+    }
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "skill_name": "zhihu-archiver",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "请帮我保存这篇知乎专栏文章：https://zhuanlan.zhihu.com/p/2018817813322670927",
+      "expected_output": "Article should be accessed via agent-browser, content extracted, and saved to ./zhihu/{topic}/{title}.md with proper frontmatter",
+      "files": []
+    }
+  ]
+}

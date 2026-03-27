@@ -1,0 +1,19 @@
+{
+  "eval_id": 0,
+  "eval_name": "archive-zhihu-article",
+  "prompt": "请帮我保存这篇知乎专栏文章：https://zhuanlan.zhihu.com/p/2018817813322670927",
+  "assertions": [
+    {
+      "text": "Skill is triggered and accesses the URL via agent-browser",
+      "type": "check"
+    },
+    {
+      "text": "Article content is extracted successfully",
+      "type": "check"
+    },
+    {
+      "text": "Content is saved to the correct zhihu/{topic} directory with proper frontmatter",
+      "type": "check"
+    }
+  ]
+}
