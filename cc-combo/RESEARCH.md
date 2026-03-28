@@ -376,6 +376,82 @@ interface ToolAdapter {
 ### Q5: 回滚机制？
 **A**: 每次切换前自动备份，`cc-combo rollback` 可以恢复到上一个配置。
 
+### Q6: 多个框架（gsd、superpowers、gstack、ralph）一起安装会互相影响怎么办？
+**A**: 这正是 CC-Combo 设计的核心场景！每个 combo 只激活你需要的那一组技能/agents，切换后只加载当前 combo 定义的内容，避免不同框架互相干扰，同时减少上下文膨胀。
+
+### Q7: 支持项目级 combo 吗？
+**A**: 支持。项目级 combo 存储在项目目录的 `.cc-combo.json`，使用 `cc-combo init` 在项目初始化，`cc-combo use --local` 切换到项目级配置。
+
+---
+
+## 核心使用场景
+
+### 场景 1: 框架隔离切换
+
+你的主要场景：
+- **GSD 模式**：只加载 gsd 相关技能，干净专注做项目管理
+- **Superpowers 模式**：只加载 superpowers 技能集合
+- **GStack 模式**：只加载 gstack QA 测试相关技能
+- **Ralph 模式**：只加载 ralph 相关技能
+- ** Agency 全量模式**：加载全部 100+ agents （当需要时才用）
+
+好处：
+- ✅ 避免不同框架技能提示词重叠冲突
+- ✅ 减少上下文长度，避免 Claude Code 提示"上下文太长"
+- ✅ 切换像 Docker 一样简单：`cc-combo use gsd`
+
+### 场景 2: TUI 交互式创建
+
+创建/编辑 combo 时，使用带多选的 TUI 控件：
+- 从**所有已安装全局技能**中勾选需要加入这个 combo 的
+- 从**所有已安装 agents**中勾选
+- 从**已安装插件**中勾选
+- 从**已配置 MCP servers**中勾选
+
+交互式工作流：
+```bash
+cc-combo create gsd
+? 请选择要包含的全局技能: (空格键选择，回车确认)
+❯ ◉ gsd
+  ◯ design-review
+  ◯ qa
+  ◯ deep-research
+...
+```
+
+### 场景 3: AI 辅助自动推荐 combo
+
+LLM 扫描你现有的 Claude Code/OpenCode/OpenClaw 配置，分析技能/agents，自动分组生成推荐的 combo：
+
+```bash
+cc-combo suggest --ai
+```
+
+工作流程：
+1. 扫描 `~/.claude/skills/`、`~/.claude/agents/`、`~/.claude/plugins/`
+2. 提取所有技能/agents 的描述信息
+3. LLM 分析分组，建议哪些技能/agents 应该放在一起
+4. 自动生成 combo 定义文件，可直接应用或编辑调整
+
+LLM 环境准备：
+- 提供清晰的提示词："根据以下技能列表，将它们分组为逻辑上内聚的 combo，每个 combo 专注一个特定工作场景..."
+- 可以调用本机 CLI 工具读取文件内容，具备完整上下文
+- 输出直接是可导入的 combo.json 格式
+
+### 场景 4: 项目级 combo
+
+在项目目录初始化项目特定配置：
+```bash
+cd my-project
+cc-combo init
+cc-combo use --local project-x
+```
+
+使用场景：
+- 不同项目需要不同的 MCP 服务配置
+- 特定项目需要特定插件/技能
+- 团队协作时可以将 .cc-combo.json 提交到仓库共享配置
+
 ---
 
 ## 第一阶段实现路线图
