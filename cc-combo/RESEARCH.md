@@ -2,14 +2,23 @@
 
 ## 项目概述
 
-CC-Combo 是一个命令行工具，用于创建、管理和快速切换不同的 AI 编辑器配置组合（combo）。每个 combo 可以包含：
+CC-Combo 是一个命令行工具，用于创建、管理和快速切换不同的 AI 编辑器配置组合（combo），类似 Docker 镜像切换的概念。
+
+**核心动机**：安装太多技能/agents会导致上下文太长，不同框架（gsd、superpowers、gstack、ralph等）的提示词会互相干扰影响效果。CC-Combo 让你可以随时切换到干净的指定组合。
+
+每个 combo 可以包含：
 - Claude Code 配置（settings.json、环境变量、权限设置等）
 - 插件集合
 - 全局技能
 - 全局 Agents
 - MCP 服务器配置
 
-第一阶段聚焦 Claude Code，架构设计具备可扩展性，未来可支持 opencode、codex、copilot cli、openclaw 等其他工具。
+**核心特性**：
+- 🎯 **框架隔离** - gsd/superpowers/gstack 等分开使用，互不干扰
+- 📝 **交互式 TUI** - 创建/编辑时多选技能、agents、plugins
+- 🤖 **AI 辅助推荐** - 扫描现有配置，LLM 自动分组生成推荐 combo
+- 🌐 **全局 + 项目级** - 支持全局配置组合，也支持项目级特定 combo
+- 🔌 **可扩展架构** - 第一阶段聚焦 Claude Code，未来可扩展支持 opencode、codex、copilot cli、openclaw 等
 
 ## 现有配置结构分析
 
